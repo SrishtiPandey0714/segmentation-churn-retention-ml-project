@@ -2,6 +2,8 @@ import os
 import sys
 import argparse
 from sklearn.model_selection import train_test_split
+import mlflow
+import mlflow.sklearn
 
 # Add src to path if needed (when running from root)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -26,17 +28,28 @@ def run_training_pipeline(data_path: str, model_save_path: str):
         X, y, test_size=0.2, random_state=42, stratify=y
     )
     
-    print("5. Training Model...")
+    print("5. Training Model (with MLflow)...")
     model = ChurnModelEnsemble(blend_weight=0.8) # 80% LGBM, 20% LR
-    model.fit(X_train, y_train)
     
-    print("6. Evaluating Model...")
-    evaluate_model(model, X_test, y_test)
-    
-    print("7. Saving Model...")
-    os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
-    save_model(model, model_save_path)
-    
+    mlflow.set_experiment("Customer_Churn_Prediction")
+    with mlflow.start_run():
+        mlflow.log_param("blend_weight_lgbm", 0.8)
+        
+        model.fit(X_train, y_train)
+        
+        print("6. Evaluating Model...")
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        mlflow.log_metric("roc_auc", metrics["roc_auc"])
+        
+        print("7. Saving Model...")
+        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+        save_model(model, model_save_path)
+        
+        # Optionally log the sklearn models inside the ensemble
+        # mlflow.sklearn.log_model(model.lgbm, "lgbm_model")
+        # mlflow.sklearn.log_model(model.lr, "lr_model")
+        
     print("Pipeline completed successfully.")
 
 if __name__ == "__main__":
