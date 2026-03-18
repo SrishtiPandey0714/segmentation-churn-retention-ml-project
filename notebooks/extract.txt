@@ -1,0 +1,186 @@
+Total cells: 115
+
+--- CELL 95 (code) ---
+from sklearn.preprocessing import PolynomialFeatures
+
+poly = PolynomialFeatures(
+    degree=2,
+    interaction_only=True,
+    include_bias=False
+)
+
+X_train_poly = poly.fit_transform(X_train[["Tenure Months", "Monthly Charges"]])
+X_test_poly = poly.transform(X_test[["Tenure Months", "Monthly Charges"]])
+
+--- CELL 96 (code) ---
+lgb_optuna.fit(X_train, y_train)
+
+y_prob_lgb_opt = lgb_optuna.predict_proba(X_test)[:,1]
+
+print("New ROC-AUC:", roc_auc_score(y_test, y_prob_lgb_opt))
+
+--- CELL 97 (code) ---
+#phase 10: final score and optimizations
+
+--- CELL 98 (code) ---
+import pandas as pd
+
+feat_imp = pd.Series(lgb_optuna.feature_importances_, index=X_train.columns)
+feat_imp = feat_imp.sort_values(ascending=False)
+
+print(feat_imp)
+
+--- CELL 99 (code) ---
+low_importance = feat_imp.tail(10).index
+
+X_train = X_train.drop(columns=low_importance)
+X_test = X_test.drop(columns=low_importance)
+
+--- CELL 100 (code) ---
+for w in np.linspace(0.7, 0.95, 10):
+    y_blend = w * y_prob_lgb_opt + (1-w) * y_prob_log
+    score = roc_auc_score(y_test, y_blend)
+    print(f"Weight {w:.2f} → {score}")
+
+--- CELL 101 (code) ---
+from sklearn.model_selection import RepeatedStratifiedKFold
+
+cv = RepeatedStratifiedKFold(
+    n_splits=5,
+    n_repeats=3,
+    random_state=42
+)
+
+--- CELL 102 (code) ---
+# phase 11: trying out final gains using oof + advanced stacking pipeline
+
+--- CELL 103 (code) ---
+import numpy as np
+import pandas as pd
+
+from sklearn.model_selection import StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.base import clone
+
+--- CELL 104 (code) ---
+kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+oof_preds = np.zeros((X_train.shape[0], len(models)))
+test_preds = np.zeros((X_test.shape[0], len(models)))
+
+for i, (name, model) in enumerate(models.items()):
+    print(f"\nTraining {name}")
+    
+    test_fold_preds = np.zeros((X_test.shape[0], kf.n_splits))
+    
+    for fold, (train_idx, val_idx) in enumerate(kf.split(X_train, y_train)):
+        print(f"Fold {fold}")
+        
+        # Use iloc because pandas
+        X_tr = X_train.iloc[train_idx]
+        X_val = X_train.iloc[val_idx]
+        y_tr = y_train.iloc[train_idx]
+        y_val = y_train.iloc[val_idx]
+        
+        model_clone = clone(model)
+        model_clone.fit(X_tr, y_tr)
+        
+        # OOF prediction (validation fold)
+        oof_preds[val_idx, i] = model_clone.predict_proba(X_val)[:,1]
+        
+        # Test predictions
+        test_fold_preds[:, fold] = model_clone.predict_proba(X_test)[:,1]
+    
+    # Average test predictions
+    test_preds[:, i] = test_fold_preds.mean(axis=1)
+
+--- CELL 105 (code) ---
+for i, name in enumerate(models.keys()):
+    score = roc_auc_score(y_train, oof_preds[:, i])
+    print(f"{name} OOF ROC-AUC: {score}")
+
+--- CELL 106 (code) ---
+meta_model = LogisticRegression()
+
+meta_model.fit(oof_preds, y_train)
+
+final_preds = meta_model.predict_proba(test_preds)[:,1]
+
+print("Stacked ROC-AUC:", roc_auc_score(y_test, final_preds))
+
+--- CELL 107 (code) ---
+oof_weighted = 0.8 * oof_preds[:,0] + 0.2 * oof_preds[:,1]
+test_weighted = 0.8 * test_preds[:,0] + 0.2 * test_preds[:,1]
+
+print("Weighted OOF ROC-AUC:", roc_auc_score(y_train, oof_weighted))
+
+--- CELL 108 (code) ---
+best_score = 0
+best_w = 0
+
+for w in np.linspace(0.6, 0.95, 20):
+    oof_blend = w * oof_preds[:,0] + (1-w) * oof_preds[:,1]
+    score = roc_auc_score(y_train, oof_blend)
+    
+    if score > best_score:
+        best_score = score
+        best_w = w
+
+print("Best weight:", best_w)
+print("Best OOF:", best_score)
+
+--- CELL 109 (code) ---
+lgb_models = []
+
+seeds = [42, 99, 123, 2024]
+
+for seed in seeds:
+    model = LGBMClassifier(**best_params, random_state=seed)
+    model.fit(X_train, y_train)
+    lgb_models.append(model)
+
+--- CELL 110 (code) ---
+y_preds = np.zeros(X_test.shape[0])
+
+for model in lgb_models:
+    y_preds += model.predict_proba(X_test)[:,1]
+
+y_preds /= len(lgb_models)
+
+--- CELL 111 (code) ---
+y_final = 0.9 * y_preds + 0.1 * y_prob_log
+
+--- CELL 112 (code) ---
+import pandas as pd
+from sklearn.metrics import roc_auc_score
+
+comparison = pd.DataFrame({
+    "Model": [
+        "Logistic Regression",
+        "LightGBM (baseline)",
+        "LightGBM (Optuna)",
+        "OOF Stacked Model",
+        "Multi-seed LGBM",
+        "FINAL BLEND (LGBM + LR) 🔥"
+    ],
+    
+    "ROC_AUC": [
+        roc_auc_score(y_test, y_prob_log),
+        roc_auc_score(y_test, y_prob_lgb),
+        roc_auc_score(y_test, y_prob_lgb_opt),
+        roc_auc_score(y_test, final_preds),
+        roc_auc_score(y_test, y_preds),
+        roc_auc_score(y_test, y_final)
+    ]
+}).sort_values("ROC_AUC", ascending=False)
+
+comparison.reset_index(drop=True)
+
+--- CELL 113 (code) ---
+oof_final = best_w * oof_preds[:,0] + (1-best_w) * oof_preds[:,1]
+
+print("Final OOF ROC-AUC:", roc_auc_score(y_train, oof_final))
+
+--- CELL 114 (code) ---
+

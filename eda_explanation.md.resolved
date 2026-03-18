@@ -1,0 +1,165 @@
+# Exploratory Data Analysis (EDA) - Notebook Explanation
+
+This document explains every command you have run in your Jupyter Notebook ([01_data_understanding_eda.ipynb](file:///c:/ds%20projects/churn-segmentation-ml/notebooks/01_data_understanding_eda.ipynb)), including the logical necessity, syntactical breakdown, visual interpretation, and finally, a structured mental approach for writing these kinds of analyses independently.
+
+---
+
+## 1. Initial Setup and Loading Data
+
+```python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+pd.set_option("display.max_columns", None)
+sns.set(style="whitegrid")
+
+df = pd.read_csv("../data/raw/telco_churn.csv")
+```
+* **Need:** To perform data analysis, you need specialized tools. `pandas` handles data tables, `numpy` handles numerical operations, and `matplotlib`/`seaborn` handle visualizations. You also load your dataset into memory.
+* **Syntax:** `pd.read_csv()` reads the CSV file path and converts it into a pandas DataFrame (a 2D table called `df`). `pd.set_option("display.max_columns", None)` ensures pandas doesn't hide middle columns with `...` when you view the table. `sns.set(style="whitegrid")` makes your charts look professional by adding a subtle background grid.
+* **Output:** No printed output, but the data is securely loaded into the variable `df`.
+
+## 2. Dataset Dimensions
+
+```python
+df.shape
+```
+* **Need:** To understand the basic size of your dataset (how many customers/rows and how many features/columns).
+* **Syntax:** `.shape` is an attribute (not a function, so no parentheses) of a DataFrame that returns a tuple showing `(rows, columns)`.
+* **Output:** `(7043, 33)` tells you there are exactly 7,043 customers and 33 columns containing information about them.
+
+## 3. Dataset Summary
+
+```python
+df.info()
+```
+* **Need:** To get a bird's-eye view of your data structure. What are the column names? What is the data type of each? Are there any obvious missing values?
+* **Syntax:** `.info()` is a method that prints a concise summary of the DataFrame.
+* **Output:** It lists all 33 columns. It shows most columns have `7043 non-null` entries, meaning they are 100% complete except for `Churn Reason` (1869 non-null). It also shows `Dtypes`: `int64` and `float64` are numbers, while `object` generally means text/categorical variables (like "Yes"/"No").
+
+## 4. The KeyError Mistake
+
+```python
+df["Churn"].value_counts(normalize=True)
+```
+* **Need:** You wanted to see what percentage of people churned vs didn't churn.
+* **Syntax:** `df["Column_Name"]` extracts a single column. `.value_counts()` counts the unique occurrences, and `normalize=True` turns those counts into percentages (ratios out of 1.0).
+* **Output:** `KeyError: 'Churn'`. This is completely normal in data science! It simply tells you mathematically: "I looked through all 33 columns, and none of them are spelled exactly as 'Churn'." 
+
+## 5. Finding the Right Column Name
+
+```python
+df.columns
+```
+* **Need:** To look at the exact spelling of all column names to fix the previous error.
+* **Syntax:** `.columns` is an attribute that returns a list of all column headers.
+* **Output:** You can spot columns like `'Churn Label'`, `'Churn Value'`, `'Churn Score'`, and `'Churn Reason'`. The correct column containing 1s and 0s for churning is `'Churn Value'`.
+
+## 6. Analyzing the Target Variable
+
+```python
+df["Churn Value"].value_counts(normalize=True)
+```
+* **Need:** To check the baseline distribution of your "Target Variable". Before predicting churn, you must know how common churn actually is.
+* **Syntax:** Same as above, but with the correct column.
+* **Output:** `0` (No Churn) is approx `0.734` (73.4%). `1` (Churn) is approx `0.265` (26.5%).
+* **Analysis:** This tells you the dataset is **imbalanced**. Most people stay. If you built a "dumb" model that simply guessed "No Churn" every single time, it would be 73.4% accurate. Your future Machine Learning model must beat 73.4% to be considered useful.
+
+## 7. Checking for Missing Values
+
+```python
+df.isnull().sum()
+```
+* **Need:** Machine learning models crash if you feed them missing data (NaNs). We must identify holes in the dataset.
+* **Syntax:** `df.isnull()` generates a table of the same size full of True/False values (True if missing). `.sum()` adds up the 'Trues' (which equal 1) column by column.
+* **Output:** All columns have `0` missing values, except `Churn Reason` which has `5174`.
+* **Analysis:** 7043 total customers - 1869 who churned = 5174 who didn't churn. People who don't churn don't have a "Churn Reason". This perfectly aligns with logic!
+
+## 8. Identifying Data Types
+
+```python
+categorical_cols = df.select_dtypes(include="object").columns
+numerical_cols = df.select_dtypes(include=["int64", "float64"]).columns
+categorical_cols, numerical_cols
+```
+* **Need:** Algorithms handle numbers (`10`, `45.5`) differently than text (`Month-to-month`, `Female`). We separate them now so we can process them differently later.
+* **Syntax:** `select_dtypes(include="...")` filters the DataFrame based on the data type, and `.columns` grabs just the headers.
+* **Output:** Two separate lists defining exactly which columns are text/categorical and which are numerical. 
+
+## 9. Univariate Analysis (Visualizing One Variable)
+
+```python
+plt.figure(figsize=(6,4))
+sns.histplot(df["Tenure Months"], bins=30, kde=True)
+plt.title("Customer Tenure Distribution")
+plt.show()
+```
+* **Need:** To understand how long customers typically stay with the company ("Tenure").
+* **Syntax:** `plt.figure(figsize=(6,4))` sets the canvas size. `sns.histplot()` makes a histogram using seaborn. `bins=30` cuts the data into 30 buckets/bars. `kde=True` draws a smooth trend-line over the bars. `plt.show()` renders the image.
+* **Output Analysis:** The resulting histogram usually shows a "U-shape" (bimodal) for Telco datasets. There will be a massive spike near 0-1 months (a lot of new customers who join and quickly leave) and another large spike near 72 months (very loyal, long-term customers). 
+
+## 10. Bivariate Analysis: Numerical vs Categorical
+
+```python
+plt.figure(figsize=(6,4))
+sns.boxplot(x="Churn Value", y="Monthly Charges", data=df)
+plt.title("Monthly Charges vs Churn")
+plt.show()
+```
+* **Need:** To answer a business question: "Do people who pay more churn more often?" We are comparing a continuous number (`Monthly Charges`) against a categorical target (`Churn Value`).
+* **Syntax:** `sns.boxplot(x="...", y="...", data=...)` maps out the distributions. Boxplots clearly show the median (middle line), the middle 50% of the data (the box), and outliers (dots).
+* **Output Analysis:** You will notice that the box for `Churn Value = 1` is positioned significantly higher on the Y-axis than the box for `0`. This visually proves that high monthly charges are a major driver of churn.
+
+## 11. Bivariate Analysis: Categorical vs Categorical
+
+```python
+plt.figure(figsize=(6,4))
+sns.countplot(x="Contract", hue="Churn Value", data=df)
+plt.xticks(rotation=45)
+plt.title("Contract Type vs Churn")
+plt.show()
+```
+* **Need:** To answer: "Which contract types are failing to retain customers?" Here we compare two distinct categories against each other.
+* **Syntax:** `sns.countplot()` counts the rows. `x="Contract"` makes a group of bars for each contract type. `hue="Churn Value"` splits those groups by color (e.g., Blue for Stayed, Orange for Churned). `plt.xticks(rotation=45)` slightly tilts the labels so they don't overlap.
+* **Output Analysis:** The graph starkly shows that "Month-to-month" contracts have a massive orange bar (high churn), while "One-year" and "Two-year" contracts have extremely low churn. This is a critical business insight.
+
+---
+
+# Mental Approach: How to write this yourself without help
+
+When faced with a brand new, empty Jupyter notebook and an unknown dataset, how do you know what to type? You follow a proven workflow, step-by-step. 
+
+Think of EDA (Exploratory Data Analysis) like examining a newly bought house. 
+
+### Step 1: The Foundation Inspection (Basic DataFrame info)
+You just got the house. You need to know how big it is and what rooms it has.
+* **Mental Prompt:** "Load the data, how big is it, and what are the columns?"
+* **Syntax to remember:** `pd.read_csv()`, `df.shape`, `df.info()`, `df.head()`
+
+### Step 2: The Core Problem (The Target Variable)
+Why are you looking at this house? To find out if there are termites (Churn). You need to know how bad the problem is right off the bat. 
+* **Mental Prompt:** "What is the variable I am trying to predict? How balanced is it?"
+* **Syntax to remember:** `df['Target_Column'].value_counts(normalize=True)`
+
+### Step 3: Checking for Damage (Missing Values)
+You need to know where the holes in the walls are before you paint.
+* **Mental Prompt:** "Are there any NaNs or missing data?"
+* **Syntax to remember:** `df.isnull().sum()`
+
+### Step 4: Exploring the Rooms (Univariate Analysis)
+Now you walk into individual rooms, one by one. You look at single columns in isolation to understand their nature.
+* **Mental prompt:** "How are individual features distributed?"
+* **Syntax to remember:** 
+  * If it's a number (Tenure, Age, Salary): Histogram `sns.histplot(x='...', data=df)`
+  * If it's a category (Gender, Contract type): Bar chart `sns.countplot(x='...', data=df)`
+
+### Step 5: Finding Connections (Bivariate Analysis)
+You want to see if the leaky roof is connected to the pool of water on the floor. In data science, you combine feature columns with your Target column to find insights.
+* **Mental prompt:** "How does Feature X affect my Target Churn?"
+* **Syntax to remember:** 
+  * If comparing **Numbers to Target**: Boxplot. `sns.boxplot(x='Target', y='NumberColumn', data=df)`
+  * If comparing **Categories to Target**: Countplot with Hue. `sns.countplot(x='CategoryColumn', hue='Target', data=df)`
+
+If you memorize this 5-step narrative, you won't need to memorize exact code snippets; you will naturally know what graphical or statistical tool you need to call next based on the question you are trying to answer.
