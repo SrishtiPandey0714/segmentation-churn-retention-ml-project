@@ -6,6 +6,9 @@ import os
 import joblib
 import shap
 import json
+from fastapi.middleware.cors import CORSMiddleware
+import shap
+import json
 
 from api.schemas import CustomerInput, PredictResponse
 from src.features.build_features import build_features
@@ -14,6 +17,15 @@ app = FastAPI(
     title="Customer Retention Intelligence Platform (CRIP)",
     description="API for predicting customer churn and explaining predictions.",
     version="1.0"
+)
+
+# Enable CORS for the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allow all for demo purposes
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Global model variable
