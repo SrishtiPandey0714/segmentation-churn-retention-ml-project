@@ -56,6 +56,14 @@ def predict_churn(customer: CustomerInput):
     # Prepare features
     X, _ = build_features(df, is_train=False)
     
+    # Align columns to what the model expects
+    if hasattr(MODEL, "lr") and hasattr(MODEL.lr, "feature_names_in_"):
+        expected_cols = MODEL.lr.feature_names_in_
+        for col in expected_cols:
+            if col not in X.columns:
+                X[col] = 0
+        X = X[expected_cols]
+    
     # Predict
     try:
         prob = float(MODEL.predict_proba(X)[0, 1])
@@ -83,6 +91,14 @@ def explain_churn(customer: CustomerInput):
     
     # Prepare features
     X, _ = build_features(df, is_train=False)
+    
+    # Align columns to what the model expects
+    if hasattr(MODEL, "lr") and hasattr(MODEL.lr, "feature_names_in_"):
+        expected_cols = MODEL.lr.feature_names_in_
+        for col in expected_cols:
+            if col not in X.columns:
+                X[col] = 0
+        X = X[expected_cols]
     
     try:
         # We need the underlying LightGBM model for TreeExplainer
