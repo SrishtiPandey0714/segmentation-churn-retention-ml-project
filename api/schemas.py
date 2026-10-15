@@ -1,10 +1,12 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, List
 
 class CustomerInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     CustomerID: str = "customer_123"
     Gender: str = "Male"
-    Senior_Citizen: str = "No"
+    Senior_Citizen: str = Field(alias="Senior Citizen", default="No")
     Partner: str = "No"
     Dependents: str = "No"
     Tenure_Months: int = Field(alias="Tenure Months", default=12)
@@ -27,3 +29,15 @@ class PredictResponse(BaseModel):
     customer_id: str
     churn_prob: float
     churn_prediction: int
+    risk_level: Optional[str] = "Low"
+    retention_recommendations: Optional[List[str]] = None
+
+class ExplainResponse(BaseModel):
+    customer_id: str
+    shap_values: List[float]
+    feature_names: List[str]
+
+class HealthResponse(BaseModel):
+    status: str
+    model_loaded: bool
+    version: str

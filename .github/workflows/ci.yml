@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
@@ -7,50 +7,180 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  test:
+  # ---------------------------------------------------------------------------
+  # 1. Backend CI: Linting & Unit/Integration Tests
+  # ---------------------------------------------------------------------------
+  backend-ci:
+    name: Backend CI (Tests & Lint)
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt || pip install fastapi uvicorn pandas numpy scikit-learn lightgbm shap pytest httpx joblib
-        
-    - name: Test API endpoints
-      run: |
-        pytest tests/
-    
-    - name: Build Docker Image
-      run: |
-        docker build -t crip-api:latest .
-        
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
-        
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Push to Amazon ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: crip-api
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        docker tag crip-api:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker tag crip-api:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Code Quality & Syntax Check
+        run: |
+          # Stop the build if there are Python syntax errors or undefined names
+          flake8 api/ src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run Test Suite
+        run: |
+          pytest tests/ -v --durations=10
+
+  # ---------------------------------------------------------------------------
+  # 2. Frontend CI: Linting & Production Build
+  # ---------------------------------------------------------------------------
+  frontend-ci:
+    name: Frontend CI (Build Verification)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build Frontend Application
+        working-directory: ./frontend
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # 3. Container Verification: Docker Build & Health Check
+  # ---------------------------------------------------------------------------
+  docker-verify:
+    name: Container Build & Health Check
+    needs: [backend-ci, frontend-ci]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend API Docker Image
+        run: |
+          docker build -t crip-api:test -f Dockerfile .
+
+      - name: Verify Container Health
+        run: |
+          docker run -d --name crip-api-test -p 8000:8000 crip-api:test
+          # Wait for container startup and poll health endpoint
+          timeout 30s bash -c 'until curl -sf http://localhost:8000/health; do sleep 2; done'
+          docker stop crip-api-test
+
+      - name: Build Frontend Docker Image
+        run: |
+          docker build -t crip-frontend:test -f frontend/Dockerfile frontend/
+
+  # ---------------------------------------------------------------------------
+  # 4. Continuous Deployment: Publish Container Images
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Continuous Deployment (CD)
+    needs: [docker-verify]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Lowercase Repository Name for GHCR
+        id: repo_name
+        run: |
+          echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push API Image to GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repo_name.outputs.IMAGE_NAME }}/crip-api:latest
+            ghcr.io/${{ steps.repo_name.outputs.IMAGE_NAME }}/crip-api:${{ github.sha }}
+
+      - name: Build and Push Frontend Image to GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.repo_name.outputs.IMAGE_NAME }}/crip-frontend:latest
+            ghcr.io/${{ steps.repo_name.outputs.IMAGE_NAME }}/crip-frontend:${{ github.sha }}
+
+      # Optional AWS ECR Push (executed if AWS secrets are configured)
+      - name: Check AWS Secrets Availability
+        id: check_aws
+        run: |
+          if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "has_aws=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_aws=false" >> $GITHUB_OUTPUT
+            echo "Notice: AWS secrets not detected. Deployed to GHCR successfully."
+          fi
+
+      - name: Configure AWS Credentials
+        if: steps.check_aws.outputs.has_aws == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Login to Amazon ECR
+        if: steps.check_aws.outputs.has_aws == 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push Images to Amazon ECR
+        if: steps.check_aws.outputs.has_aws == 'true'
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_API_REPO: crip-api
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker tag ghcr.io/${{ steps.repo_name.outputs.IMAGE_NAME }}/crip-api:latest $ECR_REGISTRY/$ECR_API_REPO:latest
+          docker tag ghcr.io/${{ steps.repo_name.outputs.IMAGE_NAME }}/crip-api:latest $ECR_REGISTRY/$ECR_API_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_API_REPO:latest
+          docker push $ECR_REGISTRY/$ECR_API_REPO:$IMAGE_TAG

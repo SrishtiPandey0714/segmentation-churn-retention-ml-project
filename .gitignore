@@ -1,4 +1,42 @@
-data/
-*.pkl
+# Python
 __pycache__/
-.ipynb_checkpoints/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Data files
+data/processed/
+*.xlsx
+
+# Models (ignore ad-hoc models, but track the production model)
+*.pkl
+!src/models/churn_model.pkl
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
